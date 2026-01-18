@@ -1,0 +1,11 @@
+<parameter name="content">services:
+  - type: web
+    name: juaconnect-frontend
+    env: static
+    staticPublishPath: dist
+    buildCommand: npm run build
+    singlePageApp:
+      redirectResponses:
+        - prefix: ""
+          path: "/index.html"
+</parameter>
