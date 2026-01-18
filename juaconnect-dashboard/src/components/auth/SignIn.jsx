@@ -19,8 +19,12 @@ function SignIn() {
 
       if (response.success) {
         alert('Welcome back!');
-        // Save user data to localStorage
+        // Save token and user data to localStorage
+        if (response.data.token) {
+          localStorage.setItem('token', response.data.token);
+        }
         localStorage.setItem('user', JSON.stringify(response.data.user));
+        localStorage.setItem('user_type', response.data.user.user_type);
         // Redirect based on user type
         const userType = response.data.user.user_type;
         if (userType === 'artisan') {

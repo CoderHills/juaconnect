@@ -30,8 +30,12 @@ function SignUp() {
 
       if (response.success) {
         alert('Account created successfully!');
-        // Save user data to localStorage
+        // Save token and user data to localStorage
+        if (response.data.token) {
+          localStorage.setItem('token', response.data.token);
+        }
         localStorage.setItem('user', JSON.stringify(response.data.user));
+        localStorage.setItem('user_type', response.data.user.user_type);
         navigate('/client-dashboard');
       } else {
         setError(response.message || 'Signup failed');
