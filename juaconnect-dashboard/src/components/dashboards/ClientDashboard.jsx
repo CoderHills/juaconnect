@@ -20,7 +20,12 @@ const ClientDashboard = () => {
     if (!userData) {
       navigate("/signin");
     } else {
-      setUser(JSON.parse(userData));
+      const parsedUser = JSON.parse(userData);
+      // Ensure name field exists (backend returns 'username')
+      if (!parsedUser.name && parsedUser.username) {
+        parsedUser.name = parsedUser.username;
+      }
+      setUser(parsedUser);
       fetchRequests();
     }
   }, [navigate]);

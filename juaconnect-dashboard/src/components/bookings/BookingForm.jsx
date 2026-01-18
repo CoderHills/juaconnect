@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Calendar, MapPin, DollarSign, FileText, User, Phone } from 'lucide-react';
+import api from '../../services/api';
 
 const BookingForm = ({ onSuccess, onCancel }) => {
   const [formData, setFormData] = useState({
@@ -37,16 +38,18 @@ const BookingForm = ({ onSuccess, onCancel }) => {
     setLoading(true);
 
     try {
-      // Import api dynamically to avoid circular dependency
-      const api = await import('../../services/api');
+      console.log('Submitting service request...');
+      console.log('Form data:', formData);
       
-      const response = await api.default.createServiceRequest({
+      const response = await api.createServiceRequest({
         service_category: formData.service,
         description: `${formData.clientName}: ${formData.description}`,
         location: formData.location,
         budget: formData.budget ? parseFloat(formData.budget) : null,
       });
 
+      console.log('API Response:', response);
+      
       if (response.success) {
         alert('Service request submitted successfully! Artisans will be notified.');
         if (onSuccess) onSuccess(response.data);
@@ -54,7 +57,8 @@ const BookingForm = ({ onSuccess, onCancel }) => {
         setError(response.message || 'Failed to submit request');
       }
     } catch (err) {
-      setError(err.message || 'An error occurred');
+      console.error('Booking form error:', err);
+      setError(err.message || 'An error occurred. Please try again.');
     } finally {
       setLoading(false);
     }
