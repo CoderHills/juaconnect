@@ -128,23 +128,19 @@ def update_artisan_profile():
 @bp.route('/available-requests', methods=['GET'])
 @jwt_required()
 def get_available_requests():
-    """Get all pending requests matching artisan's service category"""
+    """Get all pending requests available for artisan to accept"""
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
     
     if not user or user.user_type != 'artisan':
         return jsonify({'success': False, 'message': 'Only artisans can view requests'}), 403
     
-    # Get all pending requests that match the artisan's service category
-    # Also include requests that don't have an artisan_id set
+    # Get ALL pending requests that are not yet assigned to any artisan
+    # No filtering by service_category - show all available requests
     requests = ServiceRequest.query.filter(
         ServiceRequest.status == 'pending',
-        (ServiceRequest.artisan_id == None) | (ServiceRequest.artisan_id == user_id)
-    ).all()
-    
-    # Filter to only show requests matching the artisan's category
-    if user.service_category:
-        requests = [r for r in requests if r.service_category == user.service_category]
+        ServiceRequest.artisan_id == None
+    ).order_by(ServiceRequest.created_at.desc()).all()
     
     return jsonify({
         'success': True,
