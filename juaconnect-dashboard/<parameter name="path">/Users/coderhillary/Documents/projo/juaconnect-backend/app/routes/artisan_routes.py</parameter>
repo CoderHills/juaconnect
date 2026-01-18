@@ -1,0 +1,610 @@
+<parameter name="content">from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from app import db
+from app.models.models import User, ServiceRequest, Booking, Review, Notification
+from sqlalchemy import or_
+
+bp = Blueprint('artisan', __name__, url_prefix='/artisan')
+
+def create_notification(user_id, title, message, notification_type='booking', related_id=None):
+    """Helper function to create notifications"""
+    notification = Notification(
+        user_id=user_id,
+        title=title,
+        message=message,
+        notification_type=notification_type,
+        related_id=related_id
+    )
+    db.session.add(notification)
+
+@bp.route('/profile', methods=['GET'])
+@jwt_required()
+def get_profile():
+    """Get current artisan profile"""
+    try:
+        user_id = get_jwt_identity()
+        artisan = User.query.filter_by(id=user_id, user_type='artisan').first()
+        
+        if not artisan:
+            return jsonify({
+                'success': False,
+                'message': 'Artisan profile not found'
+            }), 404
+        
+        # Get additional stats
+        completed_jobs = ServiceRequest.query.filter_by(
+            artisan_id=user_id, 
+            status='completed'
+        ).count()
+        
+        total_reviews = Review.query.join(ServiceRequest).filter(
+            ServiceRequest.artisan_id == user_id
+        ).count()
+        
+        avg_rating = artisan.rating
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                **artisan.to_dict(),
+                'stats': {
+                    'completed_jobs': completed_jobs,
+                    'total_reviews': total_reviews,
+                    'average_rating': avg_rating
+                }
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to get profile: {str(e)}'
+        }), 500
+
+@bp.route('/profile', methods=['PUT'])
+@jwt_required()
+def update_profile():
+    """Update artisan profile"""
+    try:
+        user_id = get_jwt_identity()
+        artisan = User.query.filter_by(id=user_id, user_type='artisan').first()
+        
+        if not artisan:
+            return jsonify({
+                'success': False,
+                'message': 'Artisan profile not found'
+            }), 404
+        
+        data = request.get_json()
+        
+        # Update basic fields
+        if 'phone' in data:
+            artisan.phone = data['phone']
+        if 'location' in data:
+            artisan.location = data['location']
+        
+        # Update artisan-specific fields
+        artisan_fields = [
+            'service_category', 'experience_years', 'bio', 'skills',
+            'hourly_rate', 'languages', 'service_area', 'profile_photo',
+            'portfolio_urls', 'availability'
+        ]
+        
+        for field in artisan_fields:
+            if field in data:
+                setattr(artisan, field, data[field])
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Profile updated successfully',
+            'data': artisan.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'Failed to update profile: {str(e)}'
+        }), 500
+
+@bp.route('/available-requests', methods=['GET'])
+@jwt_required()
+def get_available_requests():
+    """Get pending requests that don't have an assigned artisan"""
+    try:
+        user_id = get_jwt_identity()
+        
+        # Get artisan's service category
+        artisan = User.query.filter_by(id=user_id, user_type='artisan').first()
+        if not artisan:
+            return jsonify({
+                'success': False,
+                'message': 'Artisan profile not found'
+            }), 404
+        
+        # Get requests that are:
+        # 1. Pending (no artisan assigned)
+        # 2. Matching artisan's service category OR any category if artisan accepts all
+        query = ServiceRequest.query.filter(
+            ServiceRequest.status == 'pending',
+            ServiceRequest.artisan_id.is_(None)
+        )
+        
+        # Filter by service category if artisan has one
+        if artisan.service_category:
+            query = query.filter(
+                or_(
+                    ServiceRequest.service_category.ilike(f'%{artisan.service_category}%'),
+                    ServiceRequest.service_category == artisan.service_category
+                )
+            )
+        
+        # Optional location filter
+        location = request.args.get('location')
+        if location:
+            query = query.filter(
+                ServiceRequest.location.ilike(f'%{location}%')
+            )
+        
+        requests = query.order_by(ServiceRequest.created_at.desc()).all()
+        
+        return jsonify({
+            'success': True,
+            'data': [r.to_dict() for r in requests],
+            'count': len(requests)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to fetch requests: {str(e)}'
+        }), 500
+
+@bp.route('/requests/<int:request_id>/accept', methods=['POST'])
+@jwt_required()
+def accept_request(request_id):
+    """Accept a pending service request"""
+    try:
+        user_id = get_jwt_identity()
+        
+        request_obj = ServiceRequest.query.filter_by(
+            id=request_id,
+            status='pending'
+        ).first()
+        
+        if not request_obj:
+            return jsonify({
+                'success': False,
+                'message': 'Request not found or already taken'
+            }), 404
+        
+        if request_obj.artisan_id and request_obj.artisan_id != user_id:
+            return jsonify({
+                'success': False,
+                'message': 'Request already assigned to another artisan'
+            }), 400
+        
+        # Check if artisan already has too many active jobs
+        active_jobs = ServiceRequest.query.filter(
+            ServiceRequest.artisan_id == user_id,
+            ServiceRequest.status.in_(['pending', 'accepted', 'in_progress'])
+        ).count()
+        
+        if active_jobs >= 5:
+            return jsonify({
+                'success': False,
+                'message': 'You have too many active jobs. Please complete existing jobs first.'
+            }), 400
+        
+        # Accept the request
+        request_obj.artisan_id = user_id
+        request_obj.status = 'accepted'
+        
+        # Create booking
+        booking = Booking(
+            request_id=request_id,
+            start_date=request_obj.preferred_date or request_obj.created_at,
+            status='scheduled'
+        )
+        db.session.add(booking)
+        
+        # Notify client
+        create_notification(
+            request_obj.client_id,
+            'Request Accepted',
+            f'{request_obj.artisan.username} has accepted your request for {request_obj.service_category}',
+            'booking',
+            request_id
+        )
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Request accepted successfully',
+            'data': {
+                'request': request_obj.to_dict(),
+                'booking': booking.to_dict()
+            }
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'Failed to accept request: {str(e)}'
+        }), 500
+
+@bp.route('/requests/<int:request_id>/reject', methods=['POST'])
+@jwt_required()
+def reject_request(request_id):
+    """Reject/decline a pending service request"""
+    try:
+        user_id = get_jwt_identity()
+        
+        request_obj = ServiceRequest.query.filter_by(
+            id=request_id,
+            status='pending'
+        ).first()
+        
+        if not request_obj:
+            return jsonify({
+                'success': False,
+                'message': 'Request not found or already processed'
+            }), 404
+        
+        # Mark as cancelled (artisan rejected)
+        request_obj.status = 'cancelled'
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Request declined'
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'Failed to decline request: {str(e)}'
+        }), 500
+
+@bp.route('/requests/<int:request_id>/start', methods=['POST'])
+@jwt_required()
+def start_work(request_id):
+    """Mark a request as in_progress (work started)"""
+    try:
+        user_id = get_jwt_identity()
+        
+        request_obj = ServiceRequest.query.filter_by(
+            id=request_id,
+            artisan_id=user_id,
+            status='accepted'
+        ).first()
+        
+        if not request_obj:
+            return jsonify({
+                'success': False,
+                'message': 'Request not found or not in accepted status'
+            }), 404
+        
+        request_obj.status = 'in_progress'
+        
+        # Update booking status
+        booking = Booking.query.filter_by(request_id=request_id).first()
+        if booking:
+            booking.status = 'in_progress'
+        
+        # Notify client
+        create_notification(
+            request_obj.client_id,
+            'Work Started',
+            f'The artisan has started working on your {request_obj.service_category} request',
+            'booking',
+            request_id
+        )
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Work started',
+            'data': request_obj.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'Failed to start work: {str(e)}'
+        }), 500
+
+@bp.route('/requests/<int:request_id>/complete', methods=['POST'])
+@jwt_required()
+def complete_work(request_id):
+    """Mark a request as completed"""
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json() or {}
+        
+        request_obj = ServiceRequest.query.filter_by(
+            id=request_id,
+            artisan_id=user_id,
+            status='in_progress'
+        ).first()
+        
+        if not request_obj:
+            return jsonify({
+                'success': False,
+                'message': 'Request not found or not in progress'
+            }), 404
+        
+        total_amount = data.get('total_amount', request_obj.budget)
+        
+        request_obj.status = 'completed'
+        
+        # Update booking
+        booking = Booking.query.filter_by(request_id=request_id).first()
+        if booking:
+            booking.status = 'completed'
+            booking.end_date = data.get('end_date')
+            if total_amount:
+                booking.total_amount = total_amount
+        
+        # Notify client
+        create_notification(
+            request_obj.client_id,
+            'Work Completed',
+            f'The artisan has completed the {request_obj.service_category} job. Please leave a review!',
+            'booking',
+            request_id
+        )
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Work completed successfully',
+            'data': request_obj.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'Failed to complete work: {str(e)}'
+        }), 500
+
+@bp.route('/accepted-requests', methods=['GET'])
+@jwt_required()
+def get_accepted_requests():
+    """Get all requests accepted by this artisan"""
+    try:
+        user_id = get_jwt_identity()
+        status = request.args.get('status')
+        
+        query = ServiceRequest.query.filter_by(
+            artisan_id=user_id,
+            status=status
+        ) if status else ServiceRequest.query.filter(
+            ServiceRequest.artisan_id == user_id,
+            ServiceRequest.status.in_(['accepted', 'in_progress'])
+        )
+        
+        requests = query.order_by(ServiceRequest.updated_at.desc()).all()
+        
+        return jsonify({
+            'success': True,
+            'data': [r.to_dict() for r in requests],
+            'count': len(requests)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to fetch requests: {str(e)}'
+        }), 500
+
+@bp.route('/my-jobs', methods=['GET'])
+@jwt_required()
+def get_my_jobs():
+    """Get all jobs (requests) for this artisan"""
+    try:
+        user_id = get_jwt_identity()
+        status = request.args.get('status')
+        
+        query = ServiceRequest.query.filter_by(artisan_id=user_id)
+        
+        if status:
+            query = query.filter_by(status=status)
+        
+        jobs = query.order_by(ServiceRequest.created_at.desc()).all()
+        
+        # Get statistics
+        total = ServiceRequest.query.filter_by(artisan_id=user_id).count()
+        completed = ServiceRequest.query.filter_by(
+            artisan_id=user_id, 
+            status='completed'
+        ).count()
+        in_progress = ServiceRequest.query.filter_by(
+            artisan_id=user_id, 
+            status='in_progress'
+        ).count()
+        
+        return jsonify({
+            'success': True,
+            'data': [j.to_dict() for j in jobs],
+            'stats': {
+                'total': total,
+                'completed': completed,
+                'in_progress': in_progress
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to fetch jobs: {str(e)}'
+        }), 500
+
+@bp.route('/reviews', methods=['GET'])
+@jwt_required()
+def get_reviews():
+    """Get all reviews for this artisan"""
+    try:
+        user_id = get_jwt_identity()
+        
+        reviews = Review.query.join(ServiceRequest).filter(
+            ServiceRequest.artisan_id == user_id
+        ).order_by(Review.created_at.desc()).all()
+        
+        # Calculate average
+        if reviews:
+            avg_rating = sum(r.rating for r in reviews) / len(reviews)
+        else:
+            avg_rating = 0
+        
+        return jsonify({
+            'success': True,
+            'data': [r.to_dict() for r in reviews],
+            'count': len(reviews),
+            'average_rating': round(avg_rating, 1)
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to fetch reviews: {str(e)}'
+        }), 500
+
+@bp.route('/search', methods=['GET'])
+def search_artisans():
+    """Search for artisans"""
+    try:
+        service_category = request.args.get('service_category')
+        location = request.args.get('location')
+        min_rating = request.args.get('min_rating', 0, type=float)
+        skills = request.args.get('skills')
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 12, type=int)
+        
+        query = User.query.filter_by(user_type='artisan', is_verified=True)
+        
+        if service_category:
+            query = query.filter(
+                User.service_category.ilike(f'%{service_category}%')
+            )
+        
+        if location:
+            query = query.filter(
+                or_(
+                    User.location.ilike(f'%{location}%'),
+                    User.service_area.ilike(f'%{location}%')
+                )
+            )
+        
+        if min_rating > 0:
+            query = query.filter(User.rating >= min_rating)
+        
+        if skills:
+            # Search in skills field
+            for skill in skills.split(','):
+                query = query.filter(User.skills.ilike(f'%{skill.strip()}%'))
+        
+        # Pagination
+        pagination = query.order_by(User.rating.desc()).paginate(
+            page=page, 
+            per_page=per_page, 
+            error_out=False
+        )
+        
+        return jsonify({
+            'success': True,
+            'data': [a.to_dict() for a in pagination.items],
+            'count': pagination.total,
+            'pages': pagination.pages,
+            'current_page': page
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Search failed: {str(e)}'
+        }), 500
+
+@bp.route('/<int:artisan_id>', methods=['GET'])
+def get_artisan_by_id(artisan_id):
+    """Get artisan profile by ID"""
+    try:
+        artisan = User.query.filter_by(
+            id=artisan_id, 
+            user_type='artisan'
+        ).first()
+        
+        if not artisan:
+            return jsonify({
+                'success': False,
+                'message': 'Artisan not found'
+            }), 404
+        
+        # Get statistics
+        completed_jobs = ServiceRequest.query.filter_by(
+            artisan_id=artisan_id, 
+            status='completed'
+        ).count()
+        
+        total_reviews = Review.query.join(ServiceRequest).filter(
+            ServiceRequest.artisan_id == artisan_id
+        ).count()
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                **artisan.to_dict(),
+                'stats': {
+                    'completed_jobs': completed_jobs,
+                    'total_reviews': total_reviews
+                }
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to get artisan: {str(e)}'
+        }), 500
+
+@bp.route('/<int:artisan_id>/reviews', methods=['GET'])
+def get_artisan_reviews(artisan_id):
+    """Get reviews for a specific artisan"""
+    try:
+        artisan = User.query.filter_by(
+            id=artisan_id, 
+            user_type='artisan'
+        ).first()
+        
+        if not artisan:
+            return jsonify({
+                'success': False,
+                'message': 'Artisan not found'
+            }), 404
+        
+        reviews = Review.query.join(ServiceRequest).filter(
+            ServiceRequest.artisan_id == artisan_id
+        ).order_by(Review.created_at.desc()).limit(20).all()
+        
+        return jsonify({
+            'success': True,
+            'data': [r.to_dict() for r in reviews],
+            'average_rating': artisan.rating
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to get reviews: {str(e)}'
+        }), 500
+</parameter>

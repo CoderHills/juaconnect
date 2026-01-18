@@ -1,0 +1,31 @@
+<parameter name="content"># Flask Framework
+Flask==3.0.0
+flask-cors==4.0.0
+
+# Database
+Flask-SQLAlchemy==3.1.1
+SQLAlchemy==2.0.23
+psycopg2-binary==2.9.9  # PostgreSQL adapter
+
+# Authentication
+Flask-JWT-Extended==4.6.0
+PyJWT==2.8.0
+
+# Configuration
+python-dotenv==1.0.0
+
+# Password Hashing (included with Werkzeug)
+Werkzeug==3.0.1
+
+# Email Support (for notifications)
+Flask-Mail==0.9.1
+
+# Image Handling
+Pillow==10.2.0
+
+# HTTP Requests (for M-Pesa integration)
+requests==2.31.0
+
+# Validation
+email-validator==2.1.0
+</parameter>

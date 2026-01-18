@@ -1,0 +1,383 @@
+<parameter name="content">from flask import Blueprint, request, jsonify
+from flask_jwt_extended import (
+    jwt_required, get_jwt_identity, create_access_token,
+    create_refresh_token, get_jwt
+)
+from werkzeug.security import generate_password_hash, check_password_hash
+from email_validator import validate_email, EmailNotValidError
+from app import db
+from app.models.models import User
+import re
+
+bp = Blueprint('auth', __name__, url_prefix='/auth')
+
+# Password validation regex
+PASSWORD_REGEX = re.compile(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$')
+
+def validate_password(password):
+    """Validate password strength"""
+    if not PASSWORD_REGEX.match(password):
+        return False, "Password must be at least 8 characters with uppercase, lowercase, and number"
+    return True, None
+
+def validate_user_data(data, is_signup=True):
+    """Validate user registration data"""
+    errors = []
+    
+    if is_signup:
+        if not data.get('username'):
+            errors.append('Username is required')
+        elif len(data.get('username', '')) < 3:
+            errors.append('Username must be at least 3 characters')
+        
+        if not data.get('email'):
+            errors.append('Email is required')
+        else:
+            try:
+                valid = validate_email(data['email'])
+                data['email'] = valid.email
+            except EmailNotValidError:
+                errors.append('Invalid email format')
+        
+        if not data.get('password'):
+            errors.append('Password is required')
+        else:
+            valid, msg = validate_password(data['password'])
+            if not valid:
+                errors.append(msg)
+        
+        if not data.get('user_type'):
+            errors.append('User type is required')
+        elif data['user_type'] not in ['client', 'artisan']:
+            errors.append('Invalid user type')
+    
+    # For profile updates
+    if data.get('phone') and len(data['phone']) < 10:
+        errors.append('Invalid phone number')
+    
+    return len(errors) == 0, errors if errors else None
+
+@bp.route('/signup', methods=['POST'])
+def signup():
+    """Register a new user"""
+    try:
+        data = request.get_json()
+        
+        # Validate input
+        is_valid, error = validate_user_data(data)
+        if not is_valid:
+            return jsonify({
+                'success': False,
+                'message': error[0] if isinstance(error, list) else error,
+                'errors': error
+            }), 400
+        
+        # Check if user exists
+        if User.query.filter_by(email=data['email']).first():
+            return jsonify({
+                'success': False,
+                'message': 'Email already registered'
+            }), 400
+        
+        if User.query.filter_by(username=data['username']).first():
+            return jsonify({
+                'success': False,
+                'message': 'Username already taken'
+            }), 400
+        
+        # Create user
+        user = User(
+            username=data['username'],
+            email=data['email'],
+            user_type=data['user_type'],
+            phone=data.get('phone', ''),
+            location=data.get('location', '')
+        )
+        user.set_password(data['password'])
+        
+        # Set artisan-specific fields
+        if data['user_type'] == 'artisan':
+            user.service_category = data.get('service_category', '')
+            user.experience_years = data.get('experience_years', 0)
+            user.bio = data.get('bio', '')
+            user.skills = data.get('skills', '')
+            user.hourly_rate = data.get('hourly_rate')
+            user.languages = data.get('languages', '')
+            user.service_area = data.get('service_area', '')
+        
+        db.session.add(user)
+        db.session.commit()
+        
+        # Create tokens
+        access_token = create_access_token(identity=user.id)
+        refresh_token = create_refresh_token(identity=user.id)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Registration successful',
+            'data': {
+                'token': access_token,
+                'refresh_token': refresh_token,
+                'user': user.to_dict()
+            }
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'Registration failed: {str(e)}'
+        }), 500
+
+@bp.route('/signin', methods=['POST'])
+def signin():
+    """Login user"""
+    try:
+        data = request.get_json()
+        
+        if not data.get('email') or not data.get('password'):
+            return jsonify({
+                'success': False,
+                'message': 'Email and password are required'
+            }), 400
+        
+        user = User.query.filter_by(email=data['email']).first()
+        
+        if not user or not user.check_password(data['password']):
+            return jsonify({
+                'success': False,
+                'message': 'Invalid email or password'
+            }), 401
+        
+        # Create tokens
+        access_token = create_access_token(identity=user.id)
+        refresh_token = create_refresh_token(identity=user.id)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Login successful',
+            'data': {
+                'token': access_token,
+                'refresh_token': refresh_token,
+                'user': user.to_dict()
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Login failed: {str(e)}'
+        }), 500
+
+@bp.route('/logout', methods=['POST'])
+@jwt_required()
+def logout():
+    """Logout user (client-side token removal, server can track token blacklist)"""
+    try:
+        jti = get_jwt()['jti']
+        # In production, add jti to blacklist
+        
+        return jsonify({
+            'success': True,
+            'message': 'Logged out successfully'
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Logout failed: {str(e)}'
+        }), 500
+
+@bp.route('/profile', methods=['GET'])
+@jwt_required()
+def get_profile():
+    """Get current user profile"""
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        
+        if not user:
+            return jsonify({
+                'success': False,
+                'message': 'User not found'
+            }), 404
+        
+        return jsonify({
+            'success': True,
+            'data': user.to_dict()
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to get profile: {str(e)}'
+        }), 500
+
+@bp.route('/profile', methods=['PUT'])
+@jwt_required()
+def update_profile():
+    """Update current user profile"""
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        
+        if not user:
+            return jsonify({
+                'success': False,
+                'message': 'User not found'
+            }), 404
+        
+        data = request.get_json()
+        
+        # Update basic fields
+        if 'username' in data and data['username']:
+            # Check if username is taken by another user
+            existing = User.query.filter(
+                User.username == data['username'], 
+                User.id != user_id
+            ).first()
+            if existing:
+                return jsonify({
+                    'success': False,
+                    'message': 'Username already taken'
+                }), 400
+            user.username = data['username']
+        
+        if 'phone' in data:
+            user.phone = data['phone']
+        
+        if 'location' in data:
+            user.location = data['location']
+        
+        # Update password if provided
+        if 'current_password' in data and 'new_password' in data:
+            if not user.check_password(data['current_password']):
+                return jsonify({
+                    'success': False,
+                    'message': 'Current password is incorrect'
+                }), 400
+            
+            valid, msg = validate_password(data['new_password'])
+            if not valid:
+                return jsonify({
+                    'success': False,
+                    'message': msg
+                }), 400
+            
+            user.set_password(data['new_password'])
+        
+        # Artisan-specific updates
+        if user.user_type == 'artisan':
+            artisan_fields = [
+                'service_category', 'experience_years', 'bio', 'skills',
+                'hourly_rate', 'languages', 'service_area', 'profile_photo',
+                'portfolio_urls', 'availability'
+            ]
+            for field in artisan_fields:
+                if field in data:
+                    setattr(user, field, data[field])
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Profile updated successfully',
+            'data': user.to_dict()
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'Failed to update profile: {str(e)}'
+        }), 500
+
+@bp.route('/refresh', methods=['POST'])
+def refresh_token():
+    """Refresh access token"""
+    try:
+        refresh_token = request.get_json().get('refresh_token')
+        
+        if not refresh_token:
+            return jsonify({
+                'success': False,
+                'message': 'Refresh token is required'
+            }), 400
+        
+        # In production, verify token is not blacklisted
+        from flask_jwt_extended import decode_token
+        decoded = decode_token(refresh_token)
+        user_id = decoded['sub']
+        
+        user = User.query.get(user_id)
+        if not user:
+            return jsonify({
+                'success': False,
+                'message': 'User not found'
+            }), 404
+        
+        access_token = create_access_token(identity=user_id)
+        
+        return jsonify({
+            'success': True,
+            'data': {
+                'token': access_token
+            }
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to refresh token: {str(e)}'
+        }), 500
+
+@bp.route('/change-password', methods=['POST'])
+@jwt_required()
+def change_password():
+    """Change user password"""
+    try:
+        user_id = get_jwt_identity()
+        user = User.query.get(user_id)
+        
+        if not user:
+            return jsonify({
+                'success': False,
+                'message': 'User not found'
+            }), 404
+        
+        data = request.get_json()
+        
+        if not data.get('current_password') or not data.get('new_password'):
+            return jsonify({
+                'success': False,
+                'message': 'Current password and new password are required'
+            }), 400
+        
+        if not user.check_password(data['current_password']):
+            return jsonify({
+                'success': False,
+                'message': 'Current password is incorrect'
+            }), 400
+        
+        valid, msg = validate_password(data['new_password'])
+        if not valid:
+            return jsonify({
+                'success': False,
+                'message': msg
+            }), 400
+        
+        user.set_password(data['new_password'])
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': 'Password changed successfully'
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': f'Failed to change password: {str(e)}'
+        }), 500
+</parameter>

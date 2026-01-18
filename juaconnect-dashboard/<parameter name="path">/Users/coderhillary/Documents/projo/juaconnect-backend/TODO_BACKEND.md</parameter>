@@ -1,0 +1,63 @@
+<parameter name="content"># JuaConnect Backend Implementation Plan
+
+## Database (PostgreSQL)
+- User table with artisan/client profiles
+- ServiceRequest table for bookings
+- Booking table for scheduling
+- Review table for ratings
+- Payment table for transactions
+- Notification table for alerts
+
+## Authentication
+- JWT-based authentication
+- Secure password hashing
+- Token refresh mechanism
+
+## API Endpoints
+
+### Auth Routes
+- POST /auth/signup
+- POST /auth/signin
+- GET /auth/profile
+- PUT /auth/profile
+- POST /auth/logout
+
+### Client Routes
+- POST /client/requests (create service request)
+- GET /client/requests (list my requests)
+- GET /client/requests/<id> (get request details)
+- PUT /client/requests/<id> (update/cancel)
+- GET /client/bookings (list bookings)
+- POST /client/book-artisan (direct booking)
+- POST /client/bookings/<id>/pay (payment)
+- POST /client/bookings/<id>/review (add review)
+
+### Artisan Routes
+- GET /artisan/profile (get profile)
+- PUT /artisan/profile (update profile)
+- GET /artisan/available-requests (browse requests)
+- POST /artisan/requests/<id>/accept
+- POST /artisan/requests/<id>/reject
+- POST /artisan/requests/<id>/start
+- POST /artisan/requests/<id>/complete
+- GET /artisan/accepted-requests (my jobs)
+- GET /artisan/reviews (my reviews)
+
+### Search Routes
+- GET /artisan/search (search artisans)
+- GET /artisan/<id> (get artisan by ID)
+
+### Notification Routes
+- GET /notifications
+- GET /notifications/unread
+- PUT /notifications/<id>/read
+- PUT /notifications/read-all
+- DELETE /notifications/<id>
+
+## Features to Implement
+1. Real-time updates via WebSocket
+2. M-Pesa payment integration (STK Push)
+3. Image upload for profiles/portfolio
+4. Email notifications
+5. Admin panel routes
+</parameter>
