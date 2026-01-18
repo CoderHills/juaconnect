@@ -61,6 +61,8 @@ const ArtisanDashboard = () => {
       setLastUpdated(new Date());
     } catch (error) {
       console.error("Error fetching requests:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
