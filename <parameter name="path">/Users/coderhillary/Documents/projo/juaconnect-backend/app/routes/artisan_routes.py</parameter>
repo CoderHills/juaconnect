@@ -1,0 +1,301 @@
+<parameter name="content">from flask import Blueprint, request, jsonify
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from app import db
+from app.models import User, ServiceRequest
+
+bp = Blueprint('artisan', __name__, url_prefix='/v1/artisan')
+
+@bp.route('/search', methods=['GET'])
+def search_artisans():
+    """Search for artisans by service category and/or location"""
+    service_category = request.args.get('service_category')
+    location = request.args.get('location')
+    
+    # Base query - only return verified artisans
+    query = User.query.filter_by(user_type='artisan', is_verified=True)
+    
+    # Filter by service category
+    if service_category:
+        query = query.filter(User.service_category.ilike(f'%{service_category}%'))
+    
+    # Filter by location or service area
+    if location:
+        query = query.filter(
+            (User.location.ilike(f'%{location}%')) | 
+            (User.service_area.ilike(f'%{location}%'))
+        )
+    
+    artisans = query.all()
+    
+    return jsonify({
+        'success': True,
+        'data': [artisan.to_dict() for artisan in artisans]
+    }), 200
+
+@bp.route('/', methods=['GET'])
+def get_all_artisans():
+    """Get all verified artisans"""
+    artisans = User.query.filter_by(user_type='artisan', is_verified=True).all()
+    
+    return jsonify({
+        'success': True,
+        'data': [artisan.to_dict() for artisan in artisans]
+    }), 200
+
+@bp.route('/<int:artisan_id>', methods=['GET'])
+def get_artisan(artisan_id):
+    """Get artisan details by ID"""
+    artisan = User.query.filter_by(id=artisan_id, user_type='artisan').first()
+    
+    if not artisan:
+        return jsonify({
+            'success': False,
+            'message': 'Artisan not found'
+        }), 404
+    
+    return jsonify({
+        'success': True,
+        'data': artisan.to_dict()
+    }), 200
+
+@bp.route('/profile', methods=['GET'])
+@jwt_required()
+def get_artisan_profile():
+    """Get current artisan's profile"""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    if not user or user.user_type != 'artisan':
+        return jsonify({
+            'success': False,
+            'message': 'Artisan not found'
+        }), 404
+    
+    return jsonify({
+        'success': True,
+        'data': user.to_dict()
+    }), 200
+
+@bp.route('/profile', methods=['PUT'])
+@jwt_required()
+def update_artisan_profile():
+    """Update current artisan's profile"""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    if not user or user.user_type != 'artisan':
+        return jsonify({
+            'success': False,
+            'message': 'Artisan not found'
+        }), 404
+    
+    data = request.get_json()
+    
+    try:
+        # Update basic fields
+        user.phone = data.get('phone', user.phone)
+        user.location = data.get('location', user.location)
+        user.bio = data.get('bio', user.bio)
+        user.service_category = data.get('service_category', user.service_category)
+        user.experience_years = data.get('experience_years', user.experience_years)
+        
+        # Update additional profile fields
+        user.profile_photo = data.get('profile_photo', user.profile_photo)
+        user.skills = data.get('skills', user.skills)
+        user.hourly_rate = data.get('hourly_rate', user.hourly_rate)
+        user.availability = data.get('availability', user.availability)
+        user.languages = data.get('languages', user.languages)
+        user.service_area = data.get('service_area', user.service_area)
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'data': user.to_dict(),
+            'message': 'Profile updated successfully'
+        }), 200
+    
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+
+# ==================== REQUEST MANAGEMENT ENDPOINTS ====================
+
+@bp.route('/available-requests', methods=['GET'])
+@jwt_required()
+def get_available_requests():
+    """Get all pending requests matching artisan's service category"""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    if not user or user.user_type != 'artisan':
+        return jsonify({'success': False, 'message': 'Only artisans can view requests'}), 403
+    
+    # Get all pending requests that match the artisan's service category
+    # Also include requests that don't have an artisan_id set
+    requests = ServiceRequest.query.filter(
+        ServiceRequest.status == 'pending',
+        (ServiceRequest.artisan_id == None) | (ServiceRequest.artisan_id == user_id)
+    ).all()
+    
+    # Filter to only show requests matching the artisan's category
+    if user.service_category:
+        requests = [r for r in requests if r.service_category == user.service_category]
+    
+    return jsonify({
+        'success': True,
+        'data': [req.to_dict() for req in requests]
+    }), 200
+
+
+@bp.route('/accepted-requests', methods=['GET'])
+@jwt_required()
+def get_accepted_requests():
+    """Get all requests accepted by this artisan"""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    if not user or user.user_type != 'artisan':
+        return jsonify({'success': False, 'message': 'Only artisans can view requests'}), 403
+    
+    # Get requests accepted by this artisan (in_progress, accepted, or completed)
+    requests = ServiceRequest.query.filter(
+        ServiceRequest.artisan_id == user_id,
+        ServiceRequest.status.in_(['accepted', 'in_progress', 'completed'])
+    ).all()
+    
+    return jsonify({
+        'success': True,
+        'data': [req.to_dict() for req in requests]
+    }), 200
+
+
+@bp.route('/requests/<int:request_id>/accept', methods=['POST'])
+@jwt_required()
+def accept_request(request_id):
+    """Accept a service request"""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    if not user or user.user_type != 'artisan':
+        return jsonify({'success': False, 'message': 'Only artisans can accept requests'}), 403
+    
+    service_request = ServiceRequest.query.get(request_id)
+    
+    if not service_request:
+        return jsonify({'success': False, 'message': 'Request not found'}), 404
+    
+    if service_request.status != 'pending':
+        return jsonify({'success': False, 'message': 'Request is not available'}), 400
+    
+    if service_request.artisan_id and service_request.artisan_id != user_id:
+        return jsonify({'success': False, 'message': 'Request already accepted by another artisan'}), 400
+    
+    try:
+        service_request.artisan_id = user_id
+        service_request.status = 'accepted'
+        db.session.commit()
+        
+        # Create notification for the client
+        from app.routes.notification_routes import create_notification
+        create_notification(
+            user_id=service_request.client_id,
+            title='Request Accepted',
+            message=f'{user.username} has accepted your request for {service_request.service_category}.',
+            notification_type='request_update',
+            related_id=service_request.id
+        )
+        
+        return jsonify({
+            'success': True,
+            'data': service_request.to_dict()
+        }), 200
+    
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@bp.route('/requests/<int:request_id>/start', methods=['POST'])
+@jwt_required()
+def start_work(request_id):
+    """Start work on a service request"""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    if not user or user.user_type != 'artisan':
+        return jsonify({'success': False, 'message': 'Only artisans can start work'}), 403
+    
+    service_request = ServiceRequest.query.get(request_id)
+    
+    if not service_request:
+        return jsonify({'success': False, 'message': 'Request not found'}), 404
+    
+    if service_request.artisan_id != user_id:
+        return jsonify({'success': False, 'message': 'Not authorized'}), 403
+    
+    if service_request.status != 'accepted':
+        return jsonify({'success': False, 'message': 'Request must be accepted before starting work'}), 400
+    
+    try:
+        service_request.status = 'in_progress'
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'data': service_request.to_dict()
+        }), 200
+    
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+
+@bp.route('/requests/<int:request_id>/complete', methods=['POST'])
+@jwt_required()
+def complete_work(request_id):
+    """Complete a service request"""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    if not user or user.user_type != 'artisan':
+        return jsonify({'success': False, 'message': 'Only artisans can complete work'}), 403
+    
+    service_request = ServiceRequest.query.get(request_id)
+    
+    if not service_request:
+        return jsonify({'success': False, 'message': 'Request not found'}), 404
+    
+    if service_request.artisan_id != user_id:
+        return jsonify({'success': False, 'message': 'Not authorized'}), 403
+    
+    if service_request.status != 'in_progress':
+        return jsonify({'success': False, 'message': 'Work must be in progress to complete'}), 400
+    
+    try:
+        service_request.status = 'completed'
+        db.session.commit()
+        
+        # Create notification for the client
+        from app.routes.notification_routes import create_notification
+        create_notification(
+            user_id=service_request.client_id,
+            title='Work Completed',
+            message=f'{user.username} has completed the work on your {service_request.service_category} request.',
+            notification_type='request_update',
+            related_id=service_request.id
+        )
+        
+        return jsonify({
+            'success': True,
+            'data': service_request.to_dict()
+        }), 200
+    
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'message': str(e)}), 500
+</parameter>
