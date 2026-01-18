@@ -1,0 +1,760 @@
+<parameter name="content">
+const API_BASE_URL = 'http://localhost:5000/v1';
+const USE_MOCK_API = true; // Set to false when backend is ready
+
+const getToken = () => {
+  return localStorage.getItem('token');
+};
+
+const setToken = (token) => {
+  localStorage.setItem('token', token);
+};
+
+const removeToken = () => {
+  localStorage.removeItem('token');
+};
+
+const setUserType = (userType) => {
+  localStorage.setItem('user_type', userType);
+};
+
+const getUserType = () => {
+  return localStorage.getItem('user_type');
+};
+
+// Mock notifications storage (persisted in localStorage for demo)
+const getStoredNotifications = () => {
+  try {
+    return JSON.parse(localStorage.getItem('notifications')) || [];
+  } catch {
+    return [];
+  }
+};
+
+const storeNotifications = (notifications) => {
+  localStorage.setItem('notifications', JSON.stringify(notifications));
+};
+
+// Mock bookings storage
+const getStoredBookings = () => {
+  try {
+    return JSON.parse(localStorage.getItem('bookings')) || [];
+  } catch {
+    return [];
+  }
+};
+
+const storeBookings = (bookings) => {
+  localStorage.setItem('bookings', JSON.stringify(bookings));
+};
+
+// Initialize mock data
+const initializeMockData = () => {
+  if (!localStorage.getItem('mockInitialized')) {
+    const initialBookings = [
+      {
+        id: 1,
+        client_name: 'Jane Smith',
+        client_email: 'jane@example.com',
+        client_phone: '+254712345678',
+        service_category: 'Plumbing',
+        description: 'Fix leaking tap in kitchen',
+        location: 'Nairobi, Kenya',
+        budget: 1500,
+        status: 'pending',
+        created_at: new Date().toISOString(),
+        artisan_id: null,
+        artisan_name: null
+      },
+      {
+        id: 2,
+        client_name: 'Jane Smith',
+        client_email: 'jane@example.com',
+        client_phone: '+254712345678',
+        service_category: 'Electrical',
+        description: 'Install new socket in living room',
+        location: 'Nairobi, Kenya',
+        budget: 2000,
+        status: 'accepted',
+        created_at: new Date(Date.now() - 86400000).toISOString(),
+        artisan_id: 1,
+        artisan_name: 'John Doe'
+      },
+      {
+        id: 3,
+        client_name: 'Jane Smith',
+        client_email: 'jane@example.com',
+        client_phone: '+254712345678',
+        service_category: 'Carpentry',
+        description: 'Build bookshelf',
+        location: 'Nairobi, Kenya',
+        budget: 5000,
+        status: 'completed',
+        created_at: new Date(Date.now() - 172800000).toISOString(),
+        artisan_id: 1,
+        artisan_name: 'John Doe'
+      }
+    ];
+    const initialNotifications = [
+      {
+        id: 1,
+        type: 'booking_request',
+        title: 'New Booking Request',
+        message: 'You have a new booking request for Plumbing service',
+        read: false,
+        created_at: new Date().toISOString(),
+        booking_id: 1
+      },
+      {
+        id: 2,
+        type: 'booking_accepted',
+        title: 'Booking Accepted',
+        message: 'Your booking for Electrical service has been accepted',
+        read: false,
+        created_at: new Date(Date.now() - 3600000).toISOString(),
+        booking_id: 2
+      }
+    ];
+    storeBookings(initialBookings);
+    storeNotifications(initialNotifications);
+    localStorage.setItem('mockInitialized', 'true');
+  }
+};
+
+initializeMockData();
+
+// Mock API for testing when backend is unavailable
+const mockApi = {
+  login: async (email, password) => {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    // Mock user database
+    const mockUsers = {
+      'artisan@test.com': { password: 'artisan123', user_type: 'artisan', name: 'John Doe', id: 1 },
+      'client@test.com': { password: 'client123', user_type: 'client', name: 'Jane Smith', id: 2 },
+    };
+
+    const user = mockUsers[email];
+    if (user && user.password === password) {
+      const mockToken = 'mock_token_' + Date.now();
+      setToken(mockToken);
+      setUserType(user.user_type);
+      localStorage.setItem('user', JSON.stringify({
+        id: user.id,
+        name: user.name,
+        email: email,
+        user_type: user.user_type
+      }));
+      return {
+        success: true,
+        data: {
+          token: mockToken,
+          user: {
+            user_type: user.user_type,
+            name: user.name,
+            email: email,
+            id: user.id
+          }
+        },
+        message: 'Login successful'
+      };
+    }
+    return {
+      success: false,
+      message: `Invalid credentials. Test accounts:\n\nArtisan: artisan@test.com / artisan123\nClient: client@test.com / client123`,
+      data: null
+    };
+  },
+
+  register: async (userData) => {
+    // Simulate network delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    const mockToken = 'mock_token_' + Date.now();
+    setToken(mockToken);
+    setUserType(userData.user_type);
+    
+    const userId = Math.floor(Math.random() * 1000);
+    localStorage.setItem('user', JSON.stringify({
+      id: userId,
+      name: userData.username,
+      email: userData.email,
+      user_type: userData.user_type
+    }));
+    
+    return {
+      success: true,
+      data: {
+        token: mockToken,
+        user: {
+          user_type: userData.user_type,
+          name: userData.username,
+          email: userData.email,
+          id: userId
+        }
+      },
+      message: 'Registration successful'
+    };
+  },
+
+  // Mock booking methods
+  getClientBookings: async () => {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const bookings = getStoredBookings();
+    return {
+      success: true,
+      data: bookings,
+      message: 'Bookings retrieved successfully'
+    };
+  },
+
+  getArtisanBookings: async () => {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const bookings = getStoredBookings();
+    // Filter bookings that don't have an artisan assigned or are assigned to this artisan
+    const artisanBookings = bookings.filter(b => 
+      b.artisan_id === null || b.artisan_id === 1 // For demo, use artisan ID 1
+    );
+    return {
+      success: true,
+      data: artisanBookings,
+      message: 'Artisan bookings retrieved successfully'
+    };
+  },
+
+  createBooking: async (bookingData) => {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const bookings = getStoredBookings();
+    const newBooking = {
+      id: bookings.length + 1,
+      ...bookingData,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+      artisan_id: null,
+      artisan_name: null
+    };
+    
+    bookings.push(newBooking);
+    storeBookings(bookings);
+    
+    // Create notification for admins/artisans
+    const notifications = getStoredNotifications();
+    notifications.unshift({
+      id: notifications.length + 1,
+      type: 'booking_request',
+      title: 'New Booking Request',
+      message: `New booking request for ${bookingData.service_category} service`,
+      read: false,
+      created_at: new Date().toISOString(),
+      booking_id: newBooking.id
+    });
+    storeNotifications(notifications);
+    
+    return {
+      success: true,
+      data: newBooking,
+      message: 'Booking created successfully'
+    };
+  },
+
+  acceptBooking: async (bookingId, artisanId = 1, artisanName = 'John Doe') => {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const bookings = getStoredBookings();
+    const updatedBookings = bookings.map(b => {
+      if (b.id === bookingId) {
+        return {
+          ...b,
+          status: 'accepted',
+          artisan_id: artisanId,
+          artisan_name: artisanName
+        };
+      }
+      return b;
+    });
+    storeBookings(updatedBookings);
+    
+    // Notify client
+    const notifications = getStoredNotifications();
+    notifications.unshift({
+      id: notifications.length + 1,
+      type: 'booking_accepted',
+      title: 'Booking Accepted',
+      message: `${artisanName} has accepted your booking request for ${updatedBookings.find(b => b.id === bookingId)?.service_category}`,
+      read: false,
+      created_at: new Date().toISOString(),
+      booking_id: bookingId
+    });
+    storeNotifications(notifications);
+    
+    return {
+      success: true,
+      message: 'Booking accepted successfully'
+    };
+  },
+
+  rejectBooking: async (bookingId, reason = '') => {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const bookings = getStoredBookings();
+    const updatedBookings = bookings.map(b => {
+      if (b.id === bookingId) {
+        return {
+          ...b,
+          status: 'rejected',
+          rejection_reason: reason
+        };
+      }
+      return b;
+    });
+    storeBookings(updatedBookings);
+    
+    // Notify client
+    const notifications = getStoredNotifications();
+    const booking = bookings.find(b => b.id === bookingId);
+    notifications.unshift({
+      id: notifications.length + 1,
+      type: 'booking_rejected',
+      title: 'Booking Rejected',
+      message: `Your booking request for ${booking?.service_category} has been rejected${reason ? ': ' + reason : ''}`,
+      read: false,
+      created_at: new Date().toISOString(),
+      booking_id: bookingId
+    });
+    storeNotifications(notifications);
+    
+    return {
+      success: true,
+      message: 'Booking rejected'
+    };
+  },
+
+  cancelBooking: async (bookingId) => {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const bookings = getStoredBookings();
+    const updatedBookings = bookings.map(b => {
+      if (b.id === bookingId) {
+        return {
+          ...b,
+          status: 'cancelled'
+        };
+      }
+      return b;
+    });
+    storeBookings(updatedBookings);
+    
+    return {
+      success: true,
+      message: 'Booking cancelled successfully'
+    };
+  },
+
+  getNotifications: async () => {
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const notifications = getStoredNotifications();
+    return {
+      success: true,
+      data: notifications,
+      message: 'Notifications retrieved successfully'
+    };
+  },
+
+  markNotificationRead: async (notificationId) => {
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const notifications = getStoredNotifications();
+    const updatedNotifications = notifications.map(n => {
+      if (n.id === notificationId) {
+        return { ...n, read: true };
+      }
+      return n;
+    });
+    storeNotifications(updatedNotifications);
+    return {
+      success: true,
+      message: 'Notification marked as read'
+    };
+  },
+
+  markAllNotificationsRead: async () => {
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const notifications = getStoredNotifications();
+    const updatedNotifications = notifications.map(n => ({ ...n, read: true }));
+    storeNotifications(updatedNotifications);
+    return {
+      success: true,
+      message: 'All notifications marked as read'
+    };
+  },
+
+  deleteNotification: async (notificationId) => {
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const notifications = getStoredNotifications();
+    const updatedNotifications = notifications.filter(n => n.id !== notificationId);
+    storeNotifications(updatedNotifications);
+    return {
+      success: true,
+      message: 'Notification deleted'
+    };
+  },
+
+  getUnreadNotificationCount: async () => {
+    const notifications = getStoredNotifications();
+    const unreadCount = notifications.filter(n => !n.read).length;
+    return {
+      success: true,
+      data: { count: unreadCount },
+      message: 'Unread count retrieved'
+    };
+  }
+};
+
+const api = {
+  // Auth
+  register: async (userData) => {
+    if (USE_MOCK_API) {
+      return mockApi.register(userData);
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      
+      const response = await fetch(`${API_BASE_URL}/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(userData),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        return { success: false, message: `HTTP Error: ${response.status}`, data: null };
+      }
+      
+      const data = await response.json();
+      if (data.success && data.data && data.data.token) {
+        setToken(data.data.token);
+        setUserType(data.data.user.user_type);
+      }
+      return data;
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        return { success: false, message: 'Request timeout. The backend API server is not responding.', data: null };
+      }
+      return { success: false, message: error.message, data: null };
+    }
+  },
+
+  login: async (email, password) => {
+    if (USE_MOCK_API) {
+      return mockApi.login(email, password);
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      
+      const response = await fetch(`${API_BASE_URL}/auth/signin`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+        signal: controller.signal
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        return { success: false, message: `HTTP Error: ${response.status}`, data: null };
+      }
+      
+      const data = await response.json();
+      if (data.success && data.data && data.data.token) {
+        setToken(data.data.token);
+        setUserType(data.data.user.user_type);
+      }
+      return data;
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        return { success: false, message: 'Request timeout. The backend API server is not responding.', data: null };
+      }
+      return { success: false, message: error.message, data: null };
+    }
+  },
+
+  logout: () => {
+    removeToken();
+    localStorage.removeItem('user_type');
+    localStorage.removeItem('user');
+  },
+
+  getUserType: getUserType,
+
+  // User Profile
+  getProfile: async () => {
+    const response = await fetch(`${API_BASE_URL}/auth/profile`, {
+      headers: { 'Authorization': `Bearer ${getToken()}` }
+    });
+    return await response.json();
+  },
+
+  updateProfile: async (profileData) => {
+    const response = await fetch(`${API_BASE_URL}/auth/profile`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(profileData)
+    });
+    return await response.json();
+  },
+
+  // Client Service Requests
+  createServiceRequest: async (requestData) => {
+    if (USE_MOCK_API) {
+      return mockApi.createBooking(requestData);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/client/requests`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestData)
+    });
+    return await response.json();
+  },
+
+  getMyRequests: async () => {
+    if (USE_MOCK_API) {
+      return mockApi.getClientBookings();
+    }
+
+    const response = await fetch(`${API_BASE_URL}/client/requests`, {
+      headers: { 'Authorization': `Bearer ${getToken()}` }
+    });
+    return await response.json();
+  },
+
+  getRequestDetail: async (id) => {
+    const response = await fetch(`${API_BASE_URL}/client/requests/${id}`, {
+      headers: { 'Authorization': `Bearer ${getToken()}` }
+    });
+    return await response.json();
+  },
+
+  cancelRequest: async (id) => {
+    if (USE_MOCK_API) {
+      return mockApi.cancelBooking(id);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/client/requests/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ status: 'cancelled' })
+    });
+    return await response.json();
+  },
+
+  getMyBookings: async () => {
+    if (USE_MOCK_API) {
+      return mockApi.getClientBookings();
+    }
+
+    const response = await fetch(`${API_BASE_URL}/client/bookings`, {
+      headers: { 'Authorization': `Bearer ${getToken()}` }
+    });
+    return await response.json();
+  },
+
+  // Artisan Endpoints
+  getAvailableRequests: async () => {
+    if (USE_MOCK_API) {
+      return mockApi.getArtisanBookings();
+    }
+
+    const response = await fetch(`${API_BASE_URL}/artisan/available-requests`, {
+      headers: { 'Authorization': `Bearer ${getToken()}` }
+    });
+    return await response.json();
+  },
+
+  getAcceptedRequests: async () => {
+    const response = await fetch(`${API_BASE_URL}/artisan/accepted-requests`, {
+      headers: { 'Authorization': `Bearer ${getToken()}` }
+    });
+    return await response.json();
+  },
+
+  acceptRequest: async (requestId) => {
+    if (USE_MOCK_API) {
+      return mockApi.acceptBooking(requestId);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/artisan/requests/${requestId}/accept`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'Content-Type': 'application/json',
+      }
+    });
+    return await response.json();
+  },
+
+  rejectRequest: async (requestId, reason) => {
+    if (USE_MOCK_API) {
+      return mockApi.rejectBooking(requestId, reason);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/artisan/requests/${requestId}/reject`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ reason })
+    });
+    return await response.json();
+  },
+
+  startWork: async (requestId, totalAmount) => {
+    const response = await fetch(`${API_BASE_URL}/artisan/requests/${requestId}/start`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ total_amount: totalAmount })
+    });
+    return await response.json();
+  },
+
+  completeWork: async (requestId) => {
+    const response = await fetch(`${API_BASE_URL}/artisan/requests/${requestId}/complete`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'Content-Type': 'application/json',
+      }
+    });
+    return await response.json();
+  },
+
+  searchArtisans: async (serviceCategory, location) => {
+    const params = new URLSearchParams();
+    if (serviceCategory) params.append('service_category', serviceCategory);
+    if (location) params.append('location', location);
+    
+    const response = await fetch(`${API_BASE_URL}/artisan/search?${params.toString()}`);
+    return await response.json();
+  },
+
+  // Artisan Profile
+  getArtisanProfile: async () => {
+    const response = await fetch(`${API_BASE_URL}/artisan/profile`, {
+      headers: { 'Authorization': `Bearer ${getToken()}` }
+    });
+    return await response.json();
+  },
+
+  // Booking Methods (unified API)
+  getBookings: async (status = null) => {
+    if (USE_MOCK_API) {
+      const response = await mockApi.getClientBookings();
+      if (status && response.success) {
+        response.data = response.data.filter(b => b.status === status);
+      }
+      return response;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/client/bookings`, {
+      headers: { 'Authorization': `Bearer ${getToken()}` }
+    });
+    return await response.json();
+  },
+
+  getBooking: async (id) => {
+    if (USE_MOCK_API) {
+      const response = await mockApi.getClientBookings();
+      if (response.success) {
+        response.data = response.data.find(b => b.id === id);
+      }
+      return response;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/client/bookings/${id}`, {
+      headers: { 'Authorization': `Bearer ${getToken()}` }
+    });
+    return await response.json();
+  },
+
+  getArtisanBookings: async () => {
+    if (USE_MOCK_API) {
+      return mockApi.getArtisanBookings();
+    }
+
+    const response = await fetch(`${API_BASE_URL}/artisan/bookings`, {
+      headers: { 'Authorization': `Bearer ${getToken()}` }
+    });
+    return await response.json();
+  },
+
+  createBooking: async (bookingData) => {
+    if (USE_MOCK_API) {
+      return mockApi.createBooking(bookingData);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/client/bookings`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(bookingData)
+    });
+    return await response.json();
+  },
+
+  acceptBooking: async (bookingId) => {
+    if (USE_MOCK_API) {
+      return mockApi.acceptBooking(bookingId);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/artisan/bookings/${bookingId}/accept`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'Content-Type': 'application/json',
+      }
+    });
+    return await response.json();
+  },
+
+  rejectBooking: async (bookingId, reason = '') => {
+    if (USE_MOCK_API) {
+      return mockApi.rejectBooking(bookingId, reason);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/artisan/bookings/${bookingId}/reject`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ reason })
+    });
+    return await response.json();
+  },
+
+  cancelBooking: async (bookingId) => {
+    if (USE_MOCK_API) {
+      return mockApi.cancelBooking(bookingId);
+    }
