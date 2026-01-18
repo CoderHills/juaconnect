@@ -26,11 +26,11 @@ const ArtisanDashboard = () => {
     }
   }, [navigate]);
 
-  // Poll for new requests every 3 seconds
+  // Poll for new requests every 10 seconds (reduced frequency)
   useEffect(() => {
     const interval = setInterval(() => {
       fetchRequests();
-    }, 3000);
+    }, 10000);
     
     // Listen for broadcasts from other tabs
     const channel = new BroadcastChannel('juaconnect_channel');
@@ -61,8 +61,6 @@ const ArtisanDashboard = () => {
       setLastUpdated(new Date());
     } catch (error) {
       console.error("Error fetching requests:", error);
-    } finally {
-      setLoading(false);
     }
   };
 
