@@ -17,6 +17,10 @@ const ArtisanDashboard = () => {
       navigate("/signin");
     } else {
       const parsedUser = JSON.parse(userData);
+      // Ensure name field exists (backend returns 'username')
+      if (!parsedUser.name && parsedUser.username) {
+        parsedUser.name = parsedUser.username;
+      }
       setUser(parsedUser);
       fetchRequests();
     }
